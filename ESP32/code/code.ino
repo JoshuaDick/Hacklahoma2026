@@ -1,7 +1,10 @@
 
 
+#include "bluetooth.h"
+#
 
-  // CONSTANTS and structures
+
+  // =============== Structures ===============
 struct MotorPins {
   uint8_t IN1;
   uint8_t IN2;
@@ -9,9 +12,15 @@ struct MotorPins {
   uint8_t IN4;
 };
 
+ // ===========================================
+
+
+
+ // ================ CONSTANTS ================
+
 MotorPins motors[4] = { // tl tr bl br switch order
   {32,33,25,26}, // FL
-  {23,22,1,3}, // FR
+  {23,22,21,19}, // FR
   {27,14,12,13}, // BL
   {16,4,2,15} // BR
 };
@@ -26,12 +35,28 @@ enum Wheel {
 enum Direction {
   FORWARD,
   BACKWARD,
-  IDLE
+  IDLE,
+  STOP
 };
 
+Direction commandToDirection(char c) {
+  switch (c) {
+    case 'f': return FORWARD;
+    case 'b': return BACKWARD;
+    case 'i': return IDLE;
+    case 's': return STOP;
+  }
+}
 
 
 
+const char* COMMAND_DELIMITER = " ";
+
+ // ===========================================
+
+
+
+ // ================ FUNCTIONS ================
 
 void driveWheel(Wheel wheel, Direction dir) {
   MotorPins m = motors[wheel];
@@ -52,10 +77,6 @@ void driveWheel(Wheel wheel, Direction dir) {
       break;
 
     case IDLE:
-      digitalWrite(m.IN1, HIGH);
-      digitalWrite(m.IN2, HIGH);
-      digitalWrite(m.IN3, HIGH);
-      digitalWrite(m.IN4, HIGH);
       break;
 
     default:
@@ -68,12 +89,18 @@ void driveWheel(Wheel wheel, Direction dir) {
   }
 
   
+ // ===========================================
 
 
 
-
+ // ================= RUNTIME =================
 
 void setup() {
+      // Initialize Serial
+  Serial.begin(115200);
+  Serial.println("Initialized serial");
+
+    // Initialize all motor pins
   for (int i = 0; i < 4; i++) {
     pinMode(motors[i].IN1, OUTPUT);
     pinMode(motors[i].IN2, OUTPUT);
@@ -85,27 +112,33 @@ void setup() {
     digitalWrite(motors[i].IN3, LOW);
     digitalWrite(motors[i].IN4, LOW);
   }
+  Serial.println("Initialized pins");
+
+    // Initialize bluetooth
+  initBluetooth();
+  Serial.println("Initialized bluetooth");
+
+
+  Serial.println("\n");
 };
 
 
 void loop() {
-    // Drive forward 30s
-  driveWheel(FRONT_LEFT, IDLE);
-  driveWheel(FRONT_RIGHT, IDLE);
-  driveWheel(BACK_LEFT, IDLE);
-  driveWheel(BACK_RIGHT, IDLE);
-  // delay(30000);
-  //   // Drive backward 30s
-  // driveWheel(FRONT_LEFT, BACKWARD);
-  // driveWheel(FRONT_RIGHT, BACKWARD);
-  // driveWheel(BACK_LEFT, BACKWARD);
-  // driveWheel(BACK_RIGHT, BACKWARD);
-  // delay(30000);
-  //   // Idle 30s
-  // driveWheel(FRONT_LEFT, IDLE);
-  // driveWheel(FRONT_RIGHT, IDLE);
-  // driveWheel(BACK_LEFT, IDLE);
-  // driveWheel(BACK_RIGHT, IDLE);
-  // delay(30000);
+    // Wait until command is updated to something
+  Serial.println("Command: " + command);
+
+  if (!command.equals("none")) {
+    if (command.length() != 4 && ) { // generalized command
+      Serial.println("General command: " + command);
+    } else { // Wheel specific commands
+      driveWheel(FRONT_LEFT, commandToDirection(command.charAt(0)));
+      driveWheel(FRONT_RIGHT, commandToDirection(command.charAt(1)));
+      driveWheel(BACK_LEFT, commandToDirection(command.charAt(2)));
+      driveWheel(BACK_RIGHT, commandToDirection(command.charAt(3)));
+    }
+    command = "none"; // Reset back to none when processed 
+  }
+  
+  delay(250); // buffer between checks
 };
 
