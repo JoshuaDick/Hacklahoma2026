@@ -1,219 +1,253 @@
 #!/usr/bin/env python3
-#100.89.208.16
-#!/usr/bin/env python3
 """
-Spatial Streamer Receiver
-Receives camera feed and spatial data from Android device via Tailscale
+Spatial Streamer Receiver with GUI
+Receives camera feed with heat map overlay from Android device
 """
 
 import socket
 import struct
-import json
 import cv2
 import numpy as np
-from datetime import datetime
 import threading
 import time
+from datetime import datetime
+import tkinter as tk
+from tkinter import ttk, messagebox
+from PIL import Image, ImageTk
 
-class SpatialStreamReceiver:
-    def __init__(self, host='0.0.0.0', port=8888):
-        self.host = host
-        self.port = port
+class SpatialStreamReceiverGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Spatial Stream Receiver")
+        self.root.geometry("1200x800")
+        self.root.configure(bg='#2b2b2b')
+        
+        # Connection variables
+        self.host = '100.89.208.16'
+        self.port = 8888
         self.server_socket = None
         self.client_socket = None
         self.running = False
+        self.receiving_thread = None
         
-        # Display windows
-        self.video_window = "Camera Feed"
-        self.spatial_window = "Spatial Data"
-        
-        # Latest spatial data
-        self.latest_spatial_data = None
+        # Frame data
+        self.current_frame = None
+        self.frame_lock = threading.Lock()
         self.frame_count = 0
         self.fps = 0
         self.last_fps_time = time.time()
+        self.bytes_received = 0
+        self.total_frames = 0
         
+        self.setup_gui()
+        self.update_display()
+        
+    def setup_gui(self):
+        """Setup the GUI layout"""
+        # Style
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TButton', padding=6, relief="flat", background="#4a4a4a")
+        style.configure('TLabel', background='#2b2b2b', foreground='white')
+        style.configure('TEntry', fieldbackground='#3a3a3a', foreground='white')
+        
+        # Top control panel
+        control_frame = tk.Frame(self.root, bg='#2b2b2b', pady=10)
+        control_frame.pack(side=tk.TOP, fill=tk.X, padx=10)
+        
+        # Server IP
+        tk.Label(control_frame, text="Server IP:", bg='#2b2b2b', fg='white', font=('Arial', 10)).pack(side=tk.LEFT, padx=5)
+        self.ip_entry = tk.Entry(control_frame, width=20, bg='#3a3a3a', fg='white', font=('Arial', 10))
+        self.ip_entry.insert(0, self.host)
+        self.ip_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Port
+        tk.Label(control_frame, text="Port:", bg='#2b2b2b', fg='white', font=('Arial', 10)).pack(side=tk.LEFT, padx=5)
+        self.port_entry = tk.Entry(control_frame, width=8, bg='#3a3a3a', fg='white', font=('Arial', 10))
+        self.port_entry.insert(0, str(self.port))
+        self.port_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Start button
+        self.start_button = tk.Button(
+            control_frame, 
+            text="Start Server", 
+            command=self.toggle_server,
+            bg='#4CAF50',
+            fg='white',
+            font=('Arial', 10, 'bold'),
+            padx=20,
+            relief=tk.FLAT,
+            cursor='hand2'
+        )
+        self.start_button.pack(side=tk.LEFT, padx=10)
+        
+        # Status label
+        self.status_label = tk.Label(
+            control_frame, 
+            text="● Disconnected", 
+            bg='#2b2b2b', 
+            fg='#ff5252',
+            font=('Arial', 10, 'bold')
+        )
+        self.status_label.pack(side=tk.LEFT, padx=10)
+        
+        # Stats panel
+        stats_frame = tk.Frame(self.root, bg='#2b2b2b', pady=5)
+        stats_frame.pack(side=tk.TOP, fill=tk.X, padx=10)
+        
+        self.fps_label = tk.Label(stats_frame, text="FPS: 0.0", bg='#2b2b2b', fg='#4CAF50', font=('Arial', 10))
+        self.fps_label.pack(side=tk.LEFT, padx=10)
+        
+        self.frames_label = tk.Label(stats_frame, text="Frames: 0", bg='#2b2b2b', fg='white', font=('Arial', 10))
+        self.frames_label.pack(side=tk.LEFT, padx=10)
+        
+        self.bandwidth_label = tk.Label(stats_frame, text="Bandwidth: 0 KB/s", bg='#2b2b2b', fg='white', font=('Arial', 10))
+        self.bandwidth_label.pack(side=tk.LEFT, padx=10)
+        
+        self.resolution_label = tk.Label(stats_frame, text="Resolution: N/A", bg='#2b2b2b', fg='white', font=('Arial', 10))
+        self.resolution_label.pack(side=tk.LEFT, padx=10)
+        
+        # Video display canvas
+        self.canvas = tk.Canvas(self.root, bg='#1a1a1a', highlightthickness=0)
+        self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Instructions
+        instructions = (
+            "Instructions:\n"
+            "1. Enter your Tailscale IP (find with: tailscale ip)\n"
+            "2. Click 'Start Server' to listen for connections\n"
+            "3. Enter this IP in the Android app and click 'Connect'\n"
+            "4. Heat map overlay shows distance (blue=far, red=close)"
+        )
+        self.instructions_label = tk.Label(
+            self.root, 
+            text=instructions,
+            bg='#2b2b2b', 
+            fg='#888888',
+            font=('Arial', 9),
+            justify=tk.LEFT,
+            pady=5
+        )
+        self.instructions_label.pack(side=tk.BOTTOM, fill=tk.X, padx=10)
+        
+        # Handle window close
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+    
+    def toggle_server(self):
+        """Start or stop the server"""
+        if not self.running:
+            self.start_server()
+        else:
+            self.stop_server()
+    
     def start_server(self):
-        """Start the TCP server to listen for incoming connections"""
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen(1)
-        
-        print(f"Server listening on {self.host}:{self.port}")
-        print("Waiting for Android device to connect...")
-        print("Make sure both devices are connected via Tailscale")
-        
-        self.client_socket, client_address = self.server_socket.accept()
-        print(f"Connected to {client_address}")
-        
-        self.running = True
-        return True
+        """Start listening for connections"""
+        try:
+            self.host = self.ip_entry.get()
+            self.port = int(self.port_entry.get())
+            
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket.bind((self.host, self.port))
+            self.server_socket.listen(1)
+            
+            self.running = True
+            self.start_button.config(text="Stop Server", bg='#f44336')
+            self.status_label.config(text="● Waiting for connection...", fg='#FFC107')
+            
+            # Start accepting connections in a separate thread
+            threading.Thread(target=self.accept_connection, daemon=True).start()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start server: {e}")
+            self.running = False
+    
+    def accept_connection(self):
+        """Accept incoming connection"""
+        try:
+            print(f"Server listening on {self.host}:{self.port}")
+            self.client_socket, client_address = self.server_socket.accept()
+            print(f"Connected to {client_address}")
+            
+            self.root.after(0, lambda: self.status_label.config(
+                text=f"● Connected to {client_address[0]}", 
+                fg='#4CAF50'
+            ))
+            
+            # Start receiving frames
+            self.receiving_thread = threading.Thread(target=self.receive_frames, daemon=True)
+            self.receiving_thread.start()
+            
+        except Exception as e:
+            if self.running:
+                print(f"Connection error: {e}")
+                self.root.after(0, lambda: self.stop_server())
     
     def receive_exact(self, num_bytes):
         """Receive exact number of bytes from socket"""
         data = b''
-        while len(data) < num_bytes:
-            chunk = self.client_socket.recv(num_bytes - len(data))
-            if not chunk:
-                raise ConnectionError("Connection closed")
-            data += chunk
+        while len(data) < num_bytes and self.running:
+            try:
+                chunk = self.client_socket.recv(min(num_bytes - len(data), 4096))
+                if not chunk:
+                    raise ConnectionError("Connection closed")
+                data += chunk
+            except socket.timeout:
+                continue
         return data
     
-    def receive_frame(self):
-        """Receive one frame with spatial data"""
+    def receive_frames(self):
+        """Receive and process frames"""
+        self.last_bandwidth_time = time.time()
+        self.bandwidth_bytes = 0
+        
         try:
-            # Read JSON length
-            json_length_bytes = self.receive_exact(4)
-            json_length = struct.unpack('!I', json_length_bytes)[0]
-            
-            # Read JSON data
-            json_bytes = self.receive_exact(json_length)
-            spatial_data = json.loads(json_bytes.decode('utf-8'))
-            
-            # Read image length
-            image_length_bytes = self.receive_exact(4)
-            image_length = struct.unpack('!I', image_length_bytes)[0]
-            
-            # Read image data
-            image_data = self.receive_exact(image_length)
-            
-            return spatial_data, image_data
-            
+            while self.running:
+                # Read frame size (4 bytes)
+                size_bytes = self.receive_exact(4)
+                if len(size_bytes) < 4:
+                    break
+                    
+                frame_size = struct.unpack('!I', size_bytes)[0]
+                
+                # Read JPEG data
+                jpeg_data = self.receive_exact(frame_size)
+                if len(jpeg_data) < frame_size:
+                    break
+                
+                # Update bandwidth stats
+                self.bandwidth_bytes += len(jpeg_data) + 4
+                
+                # Decode JPEG
+                nparr = np.frombuffer(jpeg_data, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if frame is not None:
+                    # Convert BGR to RGB for Tkinter
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    with self.frame_lock:
+                        self.current_frame = frame
+                        self.total_frames += 1
+                    
+                    # Update FPS
+                    self.update_fps()
+                    
+                    # Update bandwidth every second
+                    current_time = time.time()
+                    if current_time - self.last_bandwidth_time >= 1.0:
+                        bandwidth_kbps = (self.bandwidth_bytes / 1024) / (current_time - self.last_bandwidth_time)
+                        self.root.after(0, lambda bw=bandwidth_kbps: self.bandwidth_label.config(
+                            text=f"Bandwidth: {bw:.1f} KB/s"
+                        ))
+                        self.bandwidth_bytes = 0
+                        self.last_bandwidth_time = current_time
+                
         except Exception as e:
-            print(f"Error receiving frame: {e}")
-            return None, None
-    
-    def create_spatial_visualization(self, width=800, height=600):
-        """Create a visualization of spatial data"""
-        img = np.zeros((height, width, 3), dtype=np.uint8)
-        
-        if self.latest_spatial_data is None:
-            cv2.putText(img, "Waiting for data...", (50, height//2),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            return img
-        
-        # Extract data
-        accel = self.latest_spatial_data['accelerometer']
-        gyro = self.latest_spatial_data['gyroscope']
-        mag = self.latest_spatial_data['magnetometer']
-        orient = self.latest_spatial_data['orientation']
-        
-        # Display info
-        y_offset = 40
-        line_height = 35
-        
-        # Title
-        cv2.putText(img, "Spatial Data Visualization", (20, y_offset),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        y_offset += line_height + 10
-        
-        # FPS
-        cv2.putText(img, f"FPS: {self.fps:.1f}", (20, y_offset),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        y_offset += line_height
-        
-        # Accelerometer
-        cv2.putText(img, "Accelerometer (m/s²):", (20, y_offset),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 200, 255), 2)
-        y_offset += line_height
-        cv2.putText(img, f"  X: {accel[0]:7.3f}  Y: {accel[1]:7.3f}  Z: {accel[2]:7.3f}",
-                   (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        y_offset += line_height
-        
-        # Draw accelerometer bars
-        self.draw_3d_bars(img, accel, 20, y_offset, "Accel", scale=20)
-        y_offset += 100
-        
-        # Gyroscope
-        cv2.putText(img, "Gyroscope (rad/s):", (20, y_offset),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 200, 255), 2)
-        y_offset += line_height
-        cv2.putText(img, f"  X: {gyro[0]:7.3f}  Y: {gyro[1]:7.3f}  Z: {gyro[2]:7.3f}",
-                   (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        y_offset += line_height
-        
-        # Draw gyroscope bars
-        self.draw_3d_bars(img, gyro, 20, y_offset, "Gyro", scale=50)
-        y_offset += 100
-        
-        # Orientation (Azimuth, Pitch, Roll)
-        cv2.putText(img, "Orientation (radians):", (20, y_offset),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 200, 255), 2)
-        y_offset += line_height
-        cv2.putText(img, f"  Azimuth: {orient[0]:7.3f}  Pitch: {orient[1]:7.3f}  Roll: {orient[2]:7.3f}",
-                   (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        y_offset += line_height
-        
-        # Draw orientation visualization
-        self.draw_orientation_3d(img, orient, width - 250, 150, 200)
-        
-        # Magnetometer
-        y_offset += 20
-        cv2.putText(img, "Magnetometer (μT):", (20, y_offset),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 200, 255), 2)
-        y_offset += line_height
-        cv2.putText(img, f"  X: {mag[0]:7.3f}  Y: {mag[1]:7.3f}  Z: {mag[2]:7.3f}",
-                   (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
-        return img
-    
-    def draw_3d_bars(self, img, values, x, y, label, scale=50):
-        """Draw 3D bar chart for sensor values"""
-        colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0)]  # Red, Green, Blue for X, Y, Z
-        labels = ['X', 'Y', 'Z']
-        bar_width = 60
-        spacing = 80
-        
-        for i, (value, color, lab) in enumerate(zip(values, colors, labels)):
-            bar_x = x + i * spacing
-            bar_height = int(value * scale)
-            center_y = y + 50
-            
-            if bar_height > 0:
-                cv2.rectangle(img, (bar_x, center_y - bar_height), 
-                            (bar_x + bar_width, center_y), color, -1)
-            else:
-                cv2.rectangle(img, (bar_x, center_y), 
-                            (bar_x + bar_width, center_y - bar_height), color, -1)
-            
-            # Baseline
-            cv2.line(img, (bar_x, center_y), (bar_x + bar_width, center_y), (128, 128, 128), 2)
-            
-            # Label
-            cv2.putText(img, lab, (bar_x + 20, center_y + 25),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    
-    def draw_orientation_3d(self, img, orient, cx, cy, size):
-        """Draw 3D orientation visualization"""
-        azimuth, pitch, roll = orient
-        
-        # Draw circle background
-        cv2.circle(img, (cx, cy), size, (50, 50, 50), -1)
-        cv2.circle(img, (cx, cy), size, (100, 100, 100), 2)
-        
-        # Draw axes
-        # X-axis (red) - affected by roll
-        x_end_x = int(cx + size * 0.8 * np.cos(roll))
-        x_end_y = int(cy + size * 0.8 * np.sin(roll))
-        cv2.line(img, (cx, cy), (x_end_x, x_end_y), (0, 0, 255), 3)
-        
-        # Y-axis (green) - affected by pitch
-        y_end_x = int(cx + size * 0.8 * np.cos(pitch + np.pi/2))
-        y_end_y = int(cy + size * 0.8 * np.sin(pitch + np.pi/2))
-        cv2.line(img, (cx, cy), (y_end_x, y_end_y), (0, 255, 0), 3)
-        
-        # Z-axis indication (blue) - affected by azimuth
-        z_end_x = int(cx + size * 0.6 * np.cos(azimuth))
-        z_end_y = int(cy + size * 0.6 * np.sin(azimuth))
-        cv2.line(img, (cx, cy), (z_end_x, z_end_y), (255, 0, 0), 3)
-        
-        # Center dot
-        cv2.circle(img, (cx, cy), 5, (255, 255, 255), -1)
-        
-        # Labels
-        cv2.putText(img, "Orientation", (cx - 60, cy - size - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            print(f"Error receiving frames: {e}")
+        finally:
+            if self.running:
+                self.root.after(0, lambda: self.stop_server())
     
     def update_fps(self):
         """Update FPS calculation"""
@@ -225,96 +259,81 @@ class SpatialStreamReceiver:
             self.fps = self.frame_count / elapsed
             self.frame_count = 0
             self.last_fps_time = current_time
+            
+            # Update GUI
+            self.root.after(0, lambda: self.fps_label.config(text=f"FPS: {self.fps:.1f}"))
+            self.root.after(0, lambda: self.frames_label.config(text=f"Frames: {self.total_frames}"))
     
-    def run(self):
-        """Main receiver loop"""
-        if not self.start_server():
-            return
+    def update_display(self):
+        """Update the video display"""
+        with self.frame_lock:
+            if self.current_frame is not None:
+                frame = self.current_frame.copy()
+                
+                # Update resolution label
+                h, w = frame.shape[:2]
+                self.resolution_label.config(text=f"Resolution: {w}x{h}")
+                
+                # Resize to fit canvas while maintaining aspect ratio
+                canvas_width = self.canvas.winfo_width()
+                canvas_height = self.canvas.winfo_height()
+                
+                if canvas_width > 1 and canvas_height > 1:
+                    # Calculate scaling
+                    scale_w = canvas_width / w
+                    scale_h = canvas_height / h
+                    frame_resized = cv2.resize(frame, (canvas_width, canvas_height))
+
+                    
+                    # Convert to PhotoImage
+                    img = Image.fromarray(frame_resized)
+                    photo = ImageTk.PhotoImage(image=img)
+                    
+                    # Update canvas
+                    self.canvas.delete("all")
+                    x = (canvas_width - canvas_width) // 2
+                    y = (canvas_height - canvas_height) // 2
+                    self.canvas.create_image(x, y, anchor=tk.NW, image=photo)
+                    self.canvas.image = photo  # Keep a reference
         
-        cv2.namedWindow(self.video_window, cv2.WINDOW_NORMAL)
-        cv2.namedWindow(self.spatial_window, cv2.WINDOW_NORMAL)
+        # Schedule next update
+        self.root.after(33, self.update_display)  # ~30 FPS display update
+    
+    def stop_server(self):
+        """Stop the server and close connections"""
+        self.running = False
         
         try:
-            while self.running:
-                spatial_data, image_data = self.receive_frame()
-                
-                if spatial_data is None or image_data is None:
-                    print("Connection lost")
-                    break
-                
-                self.latest_spatial_data = spatial_data
-                self.update_fps()
-                
-                # Decode image (assuming YUV format from Android)
-                try:
-                    # Try to decode as JPEG or create from raw data
-                    nparr = np.frombuffer(image_data, np.uint8)
-                    
-                    # Try JPEG decode first
-                    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                    
-                    if frame is None:
-                        # If not JPEG, try to reshape as grayscale
-                        width = spatial_data['imageWidth']
-                        height = spatial_data['imageHeight']
-                        
-                        # This is a simplified approach
-                        if len(image_data) >= width * height:
-                            frame = nparr[:width*height].reshape((height, width))
-                            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-                    
-                    if frame is not None:
-                        # Add overlay info
-                        cv2.putText(frame, f"FPS: {self.fps:.1f}", (10, 30),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                        cv2.putText(frame, f"Size: {frame.shape[1]}x{frame.shape[0]}", (10, 60),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                        
-                        cv2.imshow(self.video_window, frame)
-                    
-                except Exception as e:
-                    print(f"Error decoding image: {e}")
-                
-                # Display spatial data visualization
-                spatial_viz = self.create_spatial_visualization()
-                cv2.imshow(self.spatial_window, spatial_viz)
-                
-                # Check for exit
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    print("Quitting...")
-                    break
-                    
-        except KeyboardInterrupt:
-            print("\nInterrupted by user")
-        except Exception as e:
-            print(f"Error: {e}")
-        finally:
-            self.cleanup()
+            if self.client_socket:
+                self.client_socket.close()
+            if self.server_socket:
+                self.server_socket.close()
+        except:
+            pass
+        
+        self.client_socket = None
+        self.server_socket = None
+        
+        self.start_button.config(text="Start Server", bg='#4CAF50')
+        self.status_label.config(text="● Disconnected", fg='#ff5252')
+        self.fps_label.config(text="FPS: 0.0")
+        
+        print("Server stopped")
     
-    def cleanup(self):
-        """Clean up resources"""
-        self.running = False
-        if self.client_socket:
-            self.client_socket.close()
-        if self.server_socket:
-            self.server_socket.close()
-        cv2.destroyAllWindows()
-        print("Cleanup complete")
+    def on_closing(self):
+        """Handle window close event"""
+        self.stop_server()
+        self.root.destroy()
 
 def main():
     print("="*60)
-    print("Spatial Streamer Receiver")
+    print("Spatial Streamer Receiver - GUI Version")
     print("="*60)
-    print("\nInstructions:")
-    print("1. Ensure both devices are connected to Tailscale")
-    print("2. Find this computer's Tailscale IP: tailscale ip")
-    print("3. Enter that IP in the Android app")
-    print("4. Press Connect on the Android device")
-    print("5. Press 'q' to quit")
-    print("\n" + "="*60 + "\n")
+    print("\nStarting GUI...")
     
-    receiver = SpatialStreamReceiver()
-    receiver.run()
+    root = tk.Tk()
+    app = SpatialStreamReceiverGUI(root)
+    root.mainloop()
 
 if __name__ == "__main__":
     main()
