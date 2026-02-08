@@ -10,7 +10,9 @@
 
 #include "bluetooth.h"
 #include <ESP32Servo.h>
-
+// #include <Wire.h>
+// #include <Adafruit_LSM303DLH_Mag.h>
+// #include <Adafruit_LSM303_Accel.h>
 
 
   // =============== Structures ===============
@@ -27,11 +29,17 @@ struct MotorPins {
 
  // ================ CONSTANTS ================
 
-const uint8_t LEFT_SERVO_PIN = 23;
-const uint8_t RIGHT_SERVO_PIN = 22;
-
+const uint8_t LEFT_SERVO_PIN = 22; //34
+const uint8_t RIGHT_SERVO_PIN = 21; //35
+const uint8_t NUM_FLAPS = 3;
 Servo leftServo;
 Servo rightServo;
+
+const uint8_t TASER_PIN = 23;
+
+// const uint8_t ACCEL_SCL = 22;
+// const uint8_t ACCEL_SDA = 21;
+// Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(30301);
 
 
 MotorPins motors[4] = { // tl tr bl br switch order
@@ -51,8 +59,7 @@ enum Wheel {
 enum Direction {
   FORWARD,
   BACKWARD,
-  IDLE,
-  STOP
+  IDLE
 };
 
 Direction commandToDirection(char c) {
@@ -70,7 +77,35 @@ Direction commandToDirection(char c) {
 
  // ================ FUNCTIONS ================
 
+void moveWings() {
+  for(int i = 0; i < NUM_FLAPS; i++) {
+    leftServo.write(90);
+    rightServo.write(90);
+    delay(1000);
+    leftServo.write(0);
+    rightServo.write(0);
+    delay(500);
+  }
+}
 
+
+void runTaser() {
+  digitalWrite(TASER_PIN, HIGH);
+  delay(1000);
+  digitalWrite(TASER_PIN, LOW);
+}
+
+
+// void getAccelData() {
+//   sensors_event_t a;
+//   accel.getEvent(&a);
+
+//   // Serial.print("Accel: ");
+//   // Serial.print(a.acceleration.x); Serial.print(", ");
+//   // Serial.print(a.acceleration.y); Serial.print(", ");
+//   // Serial.println(a.acceleration.z);
+//   currentAccel = String(a.acceleration.x, 2) + "x" + String(a.acceleration.y, 2) + "y" + String(a.acceleration.z, 2) + "z";
+// }
 
 
   
@@ -103,6 +138,9 @@ void driveWheel(Wheel wheel, Direction dir) {
       digitalWrite(m.IN2, HIGH);
       digitalWrite(m.IN3, LOW);
       digitalWrite(m.IN4, LOW);
+      break;
+
+    default:
       break;
   }
 }
@@ -137,53 +175,67 @@ void driveIdle() {
 
 void setup() {
       // Initialize Serial
-  Serial.begin(115200);
-  Serial.println("Initialized serial");
+  // Serial.begin(115200);
+  // Serial.println("Initialized serial");
 
     // Initialize all motor pins
-  for (int i = 0; i < 4; i++) {
-    pinMode(motors[i].IN1, OUTPUT);
-    pinMode(motors[i].IN2, OUTPUT);
-    pinMode(motors[i].IN3, OUTPUT);
-    pinMode(motors[i].IN4, OUTPUT);
-
-    digitalWrite(motors[i].IN1, HIGH);
-    digitalWrite(motors[i].IN2, HIGH);
-    digitalWrite(motors[i].IN3, LOW);
-    digitalWrite(motors[i].IN4, LOW);
-  }
-  Serial.println("Initialized pins");
+  // for (int i = 0; i < 4; i++) {
+  //   pinMode(motors[i].IN1, OUTPUT);
+  //   pinMode(motors[i].IN2, OUTPUT);
+  //   pinMode(motors[i].IN3, OUTPUT);
+  //   pinMode(motors[i].IN4, OUTPUT);
+  // }
+  // driveIdle();
+  // Serial.println("Initialized pins");
 
     // Initialize servos
+  // pinMode(LEFT_SERVO_PIN, OUTPUT);
+  // pinMode(RIGHT_SERVO_PIN, OUTPUT);
   leftServo.attach(LEFT_SERVO_PIN);
   rightServo.attach(RIGHT_SERVO_PIN);
 
+    // Initialize accelerometer
+  // Wire.begin(ACCEL_SDA, ACCEL_SCL);
+  // if (!accel.begin()) {
+  //   // Serial.println("Accel not found");
+  //   while (1);
+  // }
+
+    // Intialize taser
+  pinMode(TASER_PIN, OUTPUT);
+
     // Initialize bluetooth
   initBluetooth();
-  Serial.println("Initialized bluetooth");
+  // Serial.println("Initialized bluetooth");
 
 
-  Serial.println("\n");
+  // Serial.println("\n");
 };
 
 
 void loop() {
     // Wait until command is updated to something
-  Serial.println("Command: " + command);
+  // Serial.println("Command: " + command);
 
   if (!command.equals("none")) {
     if (command.length() != 4) { // generalized command
-      Serial.println("General command: " + command);
+      // Serial.println("General command: " + command);
       if (command == "forward") {
         driveForward();
       } else if (command == "backward") {
         driveBackward();
       } else if (command == "idle") {
         driveIdle();
-      }
+      } else if (command == "wings") {
+        moveWings();
+      } else if (command == "taser") {
+        runTaser();
+      } //else if (command == "accel") {
+      //   getAccelData();
+      // }
 
     } else { // Wheel specific commands
-      Serial.println("Custom command");
+      // Serial.println("Custom command");
       driveWheel(FRONT_LEFT, commandToDirection(command.charAt(0)));
       driveWheel(FRONT_RIGHT, commandToDirection(command.charAt(1)));
       driveWheel(BACK_LEFT, commandToDirection(command.charAt(2)));
@@ -192,13 +244,6 @@ void loop() {
     command = "none"; // Reset back to none when processed 
   }
   
-  delay(250); // buffer between checks
-
-  leftServo.write(0);
-  rightServo.write(45);
-  delay(1000);
-  leftServo.write(90);
-  rightServo.write(135);
-  delay(1000);
+  delay(100); // buffer between checks
 };
 

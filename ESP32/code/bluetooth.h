@@ -6,6 +6,7 @@ static NimBLECharacteristic* pCharacteristic;
 struct tm current_time = {0};
 
 String command = "none";
+String currentAccel = "";
 
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
@@ -26,7 +27,11 @@ class TimeCallback : public NimBLECharacteristicCallbacks {
 
         String value = pCharacteristic->getValue();
         String response = "recieved";
-        command = value; // Example input: "f f f f" where each char represents an action the user wants that repective wheel to take
+        command = value;
+
+        if (command == "accel") {
+          response = currentAccel;
+        }
 
         //do logic
         pCharacteristic->setValue(response.c_str());
