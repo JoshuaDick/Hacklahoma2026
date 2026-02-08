@@ -83,7 +83,7 @@ void moveWings() {
     rightServo.write(90);
     delay(1000);
     leftServo.write(0);
-    rightServo.write(0);
+    rightServo.write(180);
     delay(500);
   }
 }
@@ -175,18 +175,18 @@ void driveIdle() {
 
 void setup() {
       // Initialize Serial
-  // Serial.begin(115200);
-  // Serial.println("Initialized serial");
+  Serial.begin(115200);
+  Serial.println("Initialized serial");
 
     // Initialize all motor pins
-  // for (int i = 0; i < 4; i++) {
-  //   pinMode(motors[i].IN1, OUTPUT);
-  //   pinMode(motors[i].IN2, OUTPUT);
-  //   pinMode(motors[i].IN3, OUTPUT);
-  //   pinMode(motors[i].IN4, OUTPUT);
-  // }
-  // driveIdle();
-  // Serial.println("Initialized pins");
+  for (int i = 0; i < 4; i++) {
+    pinMode(motors[i].IN1, OUTPUT);
+    pinMode(motors[i].IN2, OUTPUT);
+    pinMode(motors[i].IN3, OUTPUT);
+    pinMode(motors[i].IN4, OUTPUT);
+  }
+  driveIdle();
+  Serial.println("Initialized pins");
 
     // Initialize servos
   // pinMode(LEFT_SERVO_PIN, OUTPUT);
@@ -206,7 +206,7 @@ void setup() {
 
     // Initialize bluetooth
   initBluetooth();
-  // Serial.println("Initialized bluetooth");
+  Serial.println("Initialized bluetooth");
 
 
   // Serial.println("\n");
@@ -235,7 +235,7 @@ void loop() {
       // }
 
     } else { // Wheel specific commands
-      // Serial.println("Custom command");
+      Serial.println("Custom command");
       driveWheel(FRONT_LEFT, commandToDirection(command.charAt(0)));
       driveWheel(FRONT_RIGHT, commandToDirection(command.charAt(1)));
       driveWheel(BACK_LEFT, commandToDirection(command.charAt(2)));
