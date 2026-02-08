@@ -8,10 +8,10 @@
 
 
 
-
-
-
 #include "bluetooth.h"
+#include <ESP32Servo.h>
+
+
 
   // =============== Structures ===============
 struct MotorPins {
@@ -27,9 +27,16 @@ struct MotorPins {
 
  // ================ CONSTANTS ================
 
+const uint8_t LEFT_SERVO_PIN = 23;
+const uint8_t RIGHT_SERVO_PIN = 22;
+
+Servo leftServo;
+Servo rightServo;
+
+
 MotorPins motors[4] = { // tl tr bl br switch order
   {32,33,25,26}, // FL
-  {23,22,21,19}, // FR
+  {19,18,5,17}, // FR
   {27,14,12,13}, // BL
   {16,4,2,15} // BR
 };
@@ -98,6 +105,7 @@ void driveWheel(Wheel wheel, Direction dir) {
       digitalWrite(m.IN4, LOW);
       break;
   }
+}
 
 void driveForward() {
   driveWheel(FRONT_LEFT, FORWARD);
@@ -146,6 +154,10 @@ void setup() {
   }
   Serial.println("Initialized pins");
 
+    // Initialize servos
+  leftServo.attach(LEFT_SERVO_PIN);
+  rightServo.attach(RIGHT_SERVO_PIN);
+
     // Initialize bluetooth
   initBluetooth();
   Serial.println("Initialized bluetooth");
@@ -181,5 +193,12 @@ void loop() {
   }
   
   delay(250); // buffer between checks
+
+  leftServo.write(0);
+  rightServo.write(45);
+  delay(1000);
+  leftServo.write(90);
+  rightServo.write(135);
+  delay(1000);
 };
 
