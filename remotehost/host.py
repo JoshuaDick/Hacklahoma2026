@@ -85,9 +85,6 @@ def controller_input_thread(stop_event, controller_state, state_lock):
 
     while not stop_event.is_set():
         try:
-            # -----------------------------------
-            # ENSURE CONTROLLER CONNECTED
-            # -----------------------------------
             if joystick is None:
                 pygame.joystick.quit()
                 pygame.joystick.init()
@@ -105,9 +102,6 @@ def controller_input_thread(stop_event, controller_state, state_lock):
 
             pygame.event.pump()
 
-            # -----------------------------------
-            # READ INPUT
-            # -----------------------------------
             lx = joystick.get_axis(0)
             ly = joystick.get_axis(1)
             rx = joystick.get_axis(3)
@@ -121,9 +115,6 @@ def controller_input_thread(stop_event, controller_state, state_lock):
             if has_activity(lx, ly, rx, ry, buttons):
                 last_activity = time.time()
 
-            # -----------------------------------
-            # DISCONNECT DETECTION
-            # -----------------------------------
             if time.time() - last_activity > DISCONNECT_TIMEOUT:
                 raise RuntimeError("Controller inactive: assumed disconnected")
 
